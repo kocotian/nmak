@@ -1,3 +1,6 @@
+/* See AUTHORS file for copying details
+   and LICENSE file for license details. */
+
 #include <signal.h>
 #include <stdio.h>
 #include <string.h>
