@@ -231,9 +231,12 @@ main(int argc, char *argv[])
 	char *line = NULL; size_t lnsiz = 0;
 	uint16_t hport, cport; char *hip, *cip;
 	pid_t forkpid, parentpid;
+	sigset_t sig; int signo;
 	int move;
 
 	struct sockaddr_in haddr, caddr;
+	struct sockaddr_in *chost = mmap(NULL, sizeof(*chost), PROT_READ | PROT_WRITE,
+			MAP_ANONYMOUS | MAP_SHARED, 0, 0);
 
 	/* 2 arrays of 12 checkers
 	   in format:
@@ -305,21 +308,24 @@ main(int argc, char *argv[])
 					die("read:");
 
 				switch (*buffer) {
+				/* fallthrough */
 				case 'A': /* Accepted */
+				case 'D': /* Denied */
 					kill(parentpid, SIGUSR1);
 					break;
 				case 'J': /* Join */ {
 					char *l = malloc(BUFSIZ); size_t lsiz;
-					char A = 'A'; struct sockaddr_in chost;
-					memcpy(&chost, buffer + 1, resplen - 1);
+					char A = 'A', D = 'D';
+					memcpy(chost, buffer + 1, resplen - 1);
 					printf("accept connection request from %s:%d (hosts at %s:%d)? [y/n]: ",
 							inet_ntoa(caddr.sin_addr), htons(caddr.sin_port),
-							inet_ntoa(chost.sin_addr), htons(chost.sin_port));
+							inet_ntoa(chost->sin_addr), htons(chost->sin_port));
 					if (getline(&l, &lsiz, stdin) < 0)
 						die("error while getting line:");
 					if (*l == 'y' || *l == 'Y')
 						kill(parentpid, SIGUSR1);
-					message(inet_ntoa(chost.sin_addr), ntohs(chost.sin_port), &A, 1, NULL, 0);
+					message(inet_ntoa(chost->sin_addr), ntohs(chost->sin_port),
+							(*l == 'y' || *l == 'Y') ? &A : &D, 1, NULL, 0);
 					free(l);
 					break;
 				}
@@ -335,22 +341,20 @@ main(int argc, char *argv[])
 		}
 	}
 
-	{
-		sigset_t sig; int signo;
-		if (!argc)
-			printf("\033[2J\033[Hhosting under %s:%d\nwaiting for other users...\n",
-					hip, hport);
-		else {
-			printf("\033[2J\033[Hwaiting for %s:%d to acceptation...\n",
-					cip, cport);
-			requestjoin(cip, cport, haddr);
-		}
-		sigemptyset(&sig);
-		sigaddset(&sig, SIGUSR1);
-		sigprocmask(SIG_BLOCK, &sig, NULL);
-		sigwait(&sig, &signo);
+	sigemptyset(&sig);
+	sigaddset(&sig, SIGUSR1);
+	sigprocmask(SIG_BLOCK, &sig, NULL);
+
+	if (!argc)
+		printf("\033[2J\033[Hhosting under %s:%d\nwaiting for other users...\n",
+				hip, hport);
+	else {
+		printf("\033[2J\033[Hwaiting for %s:%d to acceptation...\n",
+				cip, cport);
+		requestjoin(cip, cport, haddr);
 	}
 
+	sigwait(&sig, &signo);
 	printf("\033[2J\033[H");
 
 	while (1) {
@@ -382,6 +386,7 @@ main(int argc, char *argv[])
 
 	kill(forkpid, SIGTERM);
 	munmap(checkers, sizeof(*checkers) * 24);
+	munmap(chost, sizeof(*chost));
 	printf("\033[2J\033[H");
 	puts("goodbye!");
 }
