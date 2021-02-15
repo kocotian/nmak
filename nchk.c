@@ -24,7 +24,7 @@
 #define ROW(checker) (((checker) & 7) + 1)
 
 static void cmdmv(int16_t *checkers, char *cmd);
-static void cmdreturn(int16_t *checkers);
+static void cmdreturn(struct sockaddr_in addr, int *move, int color);
 static void drawchecker(int16_t checker);
 static void dumpcheckers(int16_t *checkers);
 static int16_t *getcheckerbypos(int16_t *checkers, int16_t row, int16_t col);
@@ -32,6 +32,10 @@ static void go(int16_t col, int16_t row);
 static int16_t makechecker(int16_t superpowered, int16_t color, int16_t col, int16_t row);
 static void prepare(int16_t *checkers);
 static void usage(void);
+
+static size_t message(struct sockaddr_in addr, char *msg, size_t msgsiz, char **buf, size_t bufsiz);
+static void sendupdate(int16_t *checkers, struct sockaddr_in addr);
+static void requestjoin(struct sockaddr_in addr, struct sockaddr_in haddr);
 
 static const char t[] =
 "\033[1;97m   a  b  c  d  e  f  g  h\n"
@@ -108,8 +112,12 @@ cmdmv(int16_t *checkers, char *cmd)
 }
 
 static void
-cmdreturn(int16_t *checkers)
+cmdreturn(struct sockaddr_in addr, int *move, int color)
 {
+	*move = !color;
+	char msg = 'R';
+	if (message(addr, (char *)&msg, 1, NULL, 0) < 0)
+		die("message:");
 }
 
 static void
@@ -179,16 +187,12 @@ usage(void)
 }
 
 static size_t
-message(char *ip, uint16_t port, char *msg, size_t msgsiz, char **buf, size_t bufsiz)
+message(struct sockaddr_in addr, char *msg, size_t msgsiz, char **buf, size_t bufsiz)
 {
 	int sockfd;
-	struct sockaddr_in addr;
 	size_t rb = 0;
 
-	addr.sin_port = htons(port);
-	addr.sin_addr.s_addr = inet_addr(ip);
-
-	if ((sockfd = socket(addr.sin_family = AF_INET, SOCK_STREAM, IPPROTO_TCP)) < 0)
+	if ((sockfd = socket(addr.sin_family, SOCK_STREAM, IPPROTO_TCP)) < 0)
 		return -1;
 
 	if (connect(sockfd, (struct sockaddr *)&addr, sizeof(addr)) < 0)
@@ -207,21 +211,21 @@ message(char *ip, uint16_t port, char *msg, size_t msgsiz, char **buf, size_t bu
 }
 
 static void
-sendupdate(int16_t *checkers, char *ip, uint16_t port)
+sendupdate(int16_t *checkers, struct sockaddr_in addr)
 {
 	char msg[39];
 	msg[0] = 'U';
 	memcpy(msg + 1, checkers, 38);
-	if (message(ip, port, msg, 39, NULL, 0) < 0)
+	if (message(addr, msg, 39, NULL, 0) < 0)
 		die("message:");
 }
 
 static void
-requestjoin(char *ip, uint16_t port, struct sockaddr_in addr)
+requestjoin(struct sockaddr_in addr, struct sockaddr_in haddr)
 {
 	char msg[1 + sizeof(addr)] = "J";
-	memcpy(msg + 1, &addr, sizeof(addr));
-	if (message(ip, port, (char *)&msg, 1 + sizeof(addr), NULL, 0) < 0)
+	memcpy(msg + 1, &haddr, sizeof(haddr));
+	if (message(addr, (char *)&msg, 1 + sizeof(addr), NULL, 0) < 0)
 		die("message:");
 }
 
@@ -229,13 +233,19 @@ int
 main(int argc, char *argv[])
 {
 	char *line = NULL; size_t lnsiz = 0;
-	uint16_t hport, cport; char *hip, *cip;
 	pid_t forkpid, parentpid;
 	sigset_t sig; int signo;
-	int move;
+	socklen_t caddrsiz;
+	int *move; char *ad;
 
 	struct sockaddr_in haddr, caddr;
 	struct sockaddr_in *chost = mmap(NULL, sizeof(*chost), PROT_READ | PROT_WRITE,
+			MAP_ANONYMOUS | MAP_SHARED, 0, 0);
+
+	ad = mmap(NULL, sizeof(*ad), PROT_READ | PROT_WRITE,
+			MAP_ANONYMOUS | MAP_SHARED, 0, 0);
+
+	move = mmap(NULL, sizeof(*move), PROT_READ | PROT_WRITE,
 			MAP_ANONYMOUS | MAP_SHARED, 0, 0);
 
 	/* 2 arrays of 12 checkers
@@ -244,52 +254,50 @@ main(int argc, char *argv[])
 	int16_t *checkers = mmap(NULL, sizeof(*checkers) * 24, PROT_READ | PROT_WRITE,
 			MAP_ANONYMOUS | MAP_SHARED, 0, 0);
 
-	hport = cport = 2321;
-	hip   = cip   = "127.0.0.1";
+	haddr.sin_family = caddr.sin_family = chost->sin_family = AF_INET;
+	haddr.sin_port = caddr.sin_port = chost->sin_port = htons(2321);
+	haddr.sin_addr.s_addr = caddr.sin_addr.s_addr =
+		chost->sin_addr.s_addr = inet_addr("127.0.0.1");
+
+	caddrsiz = sizeof(caddr);
 
 	ARGBEGIN {
-	case 'h':   hip = ARGF();						break;
-	case 'p': hport = strtol(ARGF(), NULL, 10);		break;
+	case 'h': haddr.sin_addr.s_addr = inet_addr(ARGF());				break;
+	case 'p': haddr.sin_port        = htons(strtol(ARGF(), NULL, 10));	break;
 	default: usage(); break;
 	} ARGEND
 
 	if (argc > 2)
 		die("too many arguments (given: %d; required: from 0 to 2)", argc);
 
-	move = 0;
+	*move = 0;
+
 	if (!argc) /* argc not given, hosting */
 		color = 0;
 	else /* argc given, joining */
 		color = 1;
 
 	if (argc > 0)
-		cip = argv[0];
+		chost->sin_addr.s_addr = inet_addr(argv[0]);
 	if (argc > 1)
-		cport = strtol(argv[1], NULL, 10);
+		chost->sin_port = htons(strtol(argv[1], NULL, 10));
 
-	color = 1;
 	prepare(checkers);
-
 	parentpid = getpid();
 
 	fork:
 	{
 		int sockfd, clientfd, opt;
-		socklen_t caddrsiz;
 		size_t resplen;
 
 		char buffer[BUFSIZ];
 
-		if ((sockfd = socket(haddr.sin_family = AF_INET, SOCK_STREAM, IPPROTO_TCP)) < 0)
+		if ((sockfd = socket(haddr.sin_family, SOCK_STREAM, IPPROTO_TCP)) < 0)
 			die("socket:");
 
 		if (setsockopt(sockfd, SOL_SOCKET, SO_REUSEADDR,
 					&opt, sizeof(opt)) < 0)
 			die("setsockopt:");
-
-		haddr.sin_port = htons(hport);
-		haddr.sin_addr.s_addr = inet_addr(hip);
-		caddrsiz = sizeof(caddr);
 
 		if (bind(sockfd, (const struct sockaddr *)&haddr, sizeof(haddr)) < 0)
 			die("bind:");
@@ -311,6 +319,7 @@ main(int argc, char *argv[])
 				/* fallthrough */
 				case 'A': /* Accepted */
 				case 'D': /* Denied */
+					*ad = *buffer;
 					kill(parentpid, SIGUSR1);
 					break;
 				case 'J': /* Join */ {
@@ -324,15 +333,17 @@ main(int argc, char *argv[])
 						die("error while getting line:");
 					if (*l == 'y' || *l == 'Y')
 						kill(parentpid, SIGUSR1);
-					message(inet_ntoa(chost->sin_addr), ntohs(chost->sin_port),
-							(*l == 'y' || *l == 'Y') ? &A : &D, 1, NULL, 0);
+					message(*chost, (*l == 'y' || *l == 'Y') ? &A : &D, 1, NULL, 0);
 					free(l);
 					break;
 				}
 				case 'R': /* Return */
+					*move = color;
+					kill(parentpid, SIGUSR1);
 					break;
 				case 'U': /* Update */
 					memcpy(checkers, buffer + 1, resplen - 1);
+					kill(parentpid, SIGUSR1);
 					break;
 				}
 
@@ -347,14 +358,18 @@ main(int argc, char *argv[])
 
 	if (!argc)
 		printf("\033[2J\033[Hhosting under %s:%d\nwaiting for other users...\n",
-				hip, hport);
+				inet_ntoa(haddr.sin_addr), htons(haddr.sin_port));
 	else {
 		printf("\033[2J\033[Hwaiting for %s:%d to acceptation...\n",
-				cip, cport);
-		requestjoin(cip, cport, haddr);
+				inet_ntoa(caddr.sin_addr), htons(caddr.sin_port));
+		requestjoin(*chost, haddr);
 	}
 
 	sigwait(&sig, &signo);
+	if (argc && *ad != 'A') {
+		kill(forkpid, SIGTERM);
+		die("access denied");
+	}
 	printf("\033[2J\033[H");
 
 	while (1) {
@@ -362,31 +377,39 @@ main(int argc, char *argv[])
 		printf("%s", t);
 		dumpcheckers(checkers);
 		GOUNDERT();
-		printf("\033[0;97mstatus: %s\033[0;97m\n", "\033[1;92myour move");
-		printf("\033[0;97m$ ");
-		if (getline(&line, &lnsiz, stdin) < 0)
-			break;
-		line[strlen(line) - 1] = '\0';
-		printf("\033[2J\033[H");
-		GOTOXY(1, 12);
+		printf("\033[0;97mstatus: \033[1;9%cm%s\033[0;97m\n", *move + '1', *move == color ? "your move" : "waiting");
 
-		if (COMMAND_ARG(line, "mv")) {
-			cmdmv(checkers, line + 3);
-			sendupdate(checkers, cip, cport);
-		} else if (COMMAND(line, "return"))
-			cmdreturn(checkers);
-		else if (COMMAND_ARG(line, "rm"))
-			printf("removed '%s'\n", line + 3);
-		else if (COMMAND(line, "quit") || COMMAND(line, "exit") || COMMAND(line, "bye"))
-			break;
-		else if (COMMAND(line, ""));
-		else
-			printf("%s: unknown command or bad syntax\n", line);
+		if (*move != color)
+			sigwait(&sig, &signo);
+		else {
+			printf("\033[0;97m$ ");
+
+			if (getline(&line, &lnsiz, stdin) < 0)
+				break;
+			line[strlen(line) - 1] = '\0';
+			printf("\033[2J\033[H");
+			GOTOXY(1, 12);
+
+			if (COMMAND_ARG(line, "mv")) {
+				cmdmv(checkers, line + 3);
+				sendupdate(checkers, *chost);
+			} else if (COMMAND(line, "return"))
+				cmdreturn(*chost, move, color);
+			else if (COMMAND_ARG(line, "rm"))
+				printf("removed '%s'\n", line + 3);
+			else if (COMMAND(line, "quit") || COMMAND(line, "exit") || COMMAND(line, "bye"))
+				break;
+			else if (COMMAND(line, ""));
+			else
+				printf("%s: unknown command or bad syntax\n", line);
+		}
 	}
 
 	kill(forkpid, SIGTERM);
 	munmap(checkers, sizeof(*checkers) * 24);
 	munmap(chost, sizeof(*chost));
+	munmap(move, sizeof(*move));
+	munmap(ad, sizeof(*ad));
 	printf("\033[2J\033[H");
 	puts("goodbye!");
 }
