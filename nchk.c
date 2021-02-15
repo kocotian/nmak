@@ -1,5 +1,6 @@
 #include <stdio.h>
 #include <string.h>
+#include <sys/mman.h>
 #include <sys/types.h>
 
 #include "arg.h"
@@ -15,14 +16,14 @@
 #define COL(checker) (((checker >> 3) & 7) + 1)
 #define ROW(checker) (((checker) & 7) + 1)
 
-static void cmdmv(int16_t (*checkers)[2][12], char *cmd);
-static void cmdreturn(int16_t (*checkers)[2][12]);
+static void cmdmv(int16_t *checkers, char *cmd);
+static void cmdreturn(int16_t *checkers);
 static void drawchecker(int16_t checker);
-static void dumpcheckers(int16_t (*checkers)[2][12]);
-static int16_t *getcheckerbypos(int16_t (*checkers)[2][12], int16_t row, int16_t col);
+static void dumpcheckers(int16_t *checkers);
+static int16_t *getcheckerbypos(int16_t *checkers, int16_t row, int16_t col);
 static void go(int16_t col, int16_t row);
 static int16_t makechecker(int16_t superpowered, int16_t color, int16_t col, int16_t row);
-static void prepare(int16_t (*checkers)[2][12]);
+static void prepare(int16_t *checkers);
 
 static const char t[] =
 "\033[1;97m   a  b  c  d  e  f  g  h\n"
@@ -39,7 +40,7 @@ static const char yxstr[] = "\033[%d;%dH";
 static int16_t color;
 
 static void
-cmdmv(int16_t (*checkers)[2][12], char *cmd)
+cmdmv(int16_t *checkers, char *cmd)
 {
 	int16_t *checker, *dest;
 
@@ -97,7 +98,7 @@ cmdmv(int16_t (*checkers)[2][12], char *cmd)
 }
 
 static void
-cmdreturn(int16_t (*checkers)[2][12])
+cmdreturn(int16_t *checkers)
 {
 }
 
@@ -110,23 +111,23 @@ drawchecker(int16_t checker)
 }
 
 static void
-dumpcheckers(int16_t (*checkers)[2][12])
+dumpcheckers(int16_t *checkers)
 {
 	int i, j;
 	for (i = 0; i < 2; ++i)
 		for (j = 0; j < 12; ++j) {
-			drawchecker((*checkers)[i][j]);
+			drawchecker(checkers[j + (i * 12)]);
 		}
 }
 
 static int16_t *
-getcheckerbypos(int16_t (*checkers)[2][12], int16_t row, int16_t col)
+getcheckerbypos(int16_t *checkers, int16_t row, int16_t col)
 {
 	int i, j;
 	for (i = 0; i < 2; ++i)
 		for (j = 0; j < 12; ++j)
-			if (ROW((*checkers)[i][j]) == row && COL((*checkers)[i][j]) == col)
-				return &((*checkers)[i][j]);
+			if (ROW(checkers[j + (i * 12)]) == row && COL(checkers[j + (i * 12)]) == col)
+				return &(checkers[j + (i * 12)]);
 	return NULL;
 }
 
@@ -149,15 +150,15 @@ makechecker(int16_t superpowered, int16_t color, int16_t col, int16_t row)
 }
 
 static void
-prepare(int16_t (*checkers)[2][12])
+prepare(int16_t *checkers)
 {
 	int i, j;
 	for (i = 0; i < 2; ++i)
 		for (j = 0; j < 12; ++j) {
-			(*checkers)[i][j] = 0;
-			(*checkers)[i][j] += (i << 6);
-			(*checkers)[i][j] += (((j / 4) + (i * 5)) << 3);
-			(*checkers)[i][j] += (((j % 4) * 2) + (!(((j / 4) + i) % 2)));
+			checkers[j + (i * 12)] = 0;
+			checkers[j + (i * 12)] += (i << 6);
+			checkers[j + (i * 12)] += (((j / 4) + (i * 5)) << 3);
+			checkers[j + (i * 12)] += (((j % 4) * 2) + (!(((j / 4) + i) % 2)));
 		}
 }
 
@@ -169,17 +170,18 @@ main(int argc, char *argv[])
 	/* 2 arrays of 12 checkers
 	   in format:
 	   [1 bit: superpowered][1 bit: color][3 bits: column][3 bits: row] */
-	int16_t checkers[2][12];
+	int16_t *checkers = mmap(NULL, sizeof(*checkers) * 24, PROT_READ | PROT_WRITE,
+			MAP_ANONYMOUS | MAP_SHARED, 0, 0);
 
 	color = 1;
-	prepare(&checkers);
+	prepare(checkers);
 
 	printf("\033[2J\033[H");
 
 	while (1) {
 		GOTOXY(1, 1);
 		printf("%s", t);
-		dumpcheckers(&checkers);
+		dumpcheckers(checkers);
 		GOUNDERT();
 		printf("\033[0;97mstatus: %s\033[0;97m\n", "\033[1;92myour move");
 		printf("\033[0;97m$ ");
@@ -190,9 +192,9 @@ main(int argc, char *argv[])
 		GOTOXY(1, 12);
 
 		if (COMMAND_ARG(line, "mv"))
-			cmdmv(&checkers, line + 3);
+			cmdmv(checkers, line + 3);
 		else if (COMMAND(line, "return"))
-			cmdreturn(&checkers);
+			cmdreturn(checkers);
 		else if (COMMAND_ARG(line, "rm"))
 			printf("removed '%s'\n", line + 3);
 		else if (COMMAND(line, "quit") || COMMAND(line, "exit") || COMMAND(line, "bye"))
@@ -201,6 +203,8 @@ main(int argc, char *argv[])
 		else
 			printf("%s: unknown command or bad syntax\n", line);
 	}
+
+	munmap(checkers, sizeof(*checkers) * 24);
 	printf("\033[2J\033[H");
 	puts("goodbye!");
 }
