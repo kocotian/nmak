@@ -17,6 +17,7 @@
 #define COMMAND_ARG(cmd, src) !strcmpt((src" "), (cmd), ' ')
 #define GOTOXY(x, y) printf(yxstr, (y), (x))
 #define GOUNDERT() GOTOXY(1, 10)
+#define RETONFAIL(statement) if ((statement) < -1) return -1
 
 #define SUPERPOWERED(checker) (((checker) >> 7) & 1)
 #define COLOR(checker) (((checker) >> 6) & 1)
@@ -133,9 +134,8 @@ dumpcheckers(int16_t *checkers)
 {
 	int i, j;
 	for (i = 0; i < 2; ++i)
-		for (j = 0; j < 12; ++j) {
+		for (j = 0; j < 12; ++j)
 			drawchecker(checkers[j + (i * 12)]);
-		}
 }
 
 static int16_t *
@@ -158,13 +158,7 @@ go(int16_t col, int16_t row)
 static int16_t
 makechecker(int16_t superpowered, int16_t color, int16_t col, int16_t row)
 {
-	int16_t ret;
-	ret = 0;
-	ret += row & 7;
-	ret += (col & 7) << 3;
-	ret += (color & 1) << 6;
-	ret += (superpowered & 1) << 7;
-	return ret;
+	return (row & 7) + ((col & 7) << 3) + ((color & 1) << 6) + ((superpowered & 1) << 7);
 }
 
 static void
@@ -172,12 +166,9 @@ prepare(int16_t *checkers)
 {
 	int i, j;
 	for (i = 0; i < 2; ++i)
-		for (j = 0; j < 12; ++j) {
-			checkers[j + (i * 12)] = 0;
-			checkers[j + (i * 12)] += (i << 6);
-			checkers[j + (i * 12)] += (((j / 4) + (i * 5)) << 3);
-			checkers[j + (i * 12)] += (((j % 4) * 2) + (!(((j / 4) + i) % 2)));
-		}
+		for (j = 0; j < 12; ++j)
+			checkers[j + (i * 12)] = 0 + (i << 6) + (((j / 4) + (i * 5)) << 3) +
+				(((j % 4) * 2) + (!(((j / 4) + i) % 2)));
 }
 
 static void
@@ -192,19 +183,12 @@ message(struct sockaddr_in addr, char *msg, size_t msgsiz, char **buf, size_t bu
 	int sockfd;
 	size_t rb = 0;
 
-	if ((sockfd = socket(addr.sin_family, SOCK_STREAM, IPPROTO_TCP)) < 0)
-		return -1;
+	RETONFAIL(sockfd = socket(addr.sin_family, SOCK_STREAM, IPPROTO_TCP));
+	RETONFAIL(connect(sockfd, (struct sockaddr *)&addr, sizeof(addr)));
+	RETONFAIL(send(sockfd, msg, msgsiz, 0));
 
-	if (connect(sockfd, (struct sockaddr *)&addr, sizeof(addr)) < 0)
-		return -1;
-
-	if (send(sockfd, msg, msgsiz, 0) < 0)
-		return -1;
-
-	if (buf != NULL) {
-		if ((rb = read(sockfd, *buf, bufsiz)) < 0)
-			return -1;
-	}
+	if (buf != NULL)
+		RETONFAIL(rb = read(sockfd, *buf, bufsiz));
 
 	close(sockfd);
 	return rb;
@@ -323,8 +307,8 @@ main(int argc, char *argv[])
 					kill(parentpid, SIGUSR1);
 					break;
 				case 'J': /* Join */ {
-					char *l = malloc(BUFSIZ); size_t lsiz;
-					char A = 'A', D = 'D';
+					char *l = NULL; size_t lsiz = 0;
+					char AD[] = "AD";
 					memcpy(chost, buffer + 1, resplen - 1);
 					printf("accept connection request from %s:%d (hosts at %s:%d)? [y/n]: ",
 							inet_ntoa(caddr.sin_addr), htons(caddr.sin_port),
@@ -333,7 +317,7 @@ main(int argc, char *argv[])
 						die("error while getting line:");
 					if (*l == 'y' || *l == 'Y')
 						kill(parentpid, SIGUSR1);
-					message(*chost, (*l == 'y' || *l == 'Y') ? &A : &D, 1, NULL, 0);
+					message(*chost, (*l == 'y' || *l == 'Y') ? AD : AD + 1, 1, NULL, 0);
 					free(l);
 					break;
 				}
