@@ -29,6 +29,8 @@
 
 static void cmdmv(int16_t *checkers, char *cmd);
 static void cmdreturn(struct sockaddr_in addr, int *move, int color);
+static void cmdrm(int16_t *checkers, char *cmd);
+static void cmdsu(int16_t *checkers, char *cmd);
 static void drawchecker(int16_t checker);
 static void dumpcheckers(int16_t *checkers);
 static int16_t *getcheckerbypos(int16_t *checkers, int16_t row, int16_t col);
@@ -122,6 +124,66 @@ cmdreturn(struct sockaddr_in addr, int *move, int color)
 	char msg = 'R';
 	if (message(addr, (char *)&msg, 1, NULL, 0) < 0)
 		die("message:");
+}
+
+static void
+cmdrm(int16_t *checkers, char *cmd)
+{
+	int16_t *checker, *dest;
+
+	if (!strcmp(cmd, "help")) {
+		usage:
+		puts("usage: rm <position>");
+		puts("\nexample: rm c4");
+		return;
+	}
+
+	if (
+	!(   (cmd[0] >= 'a' && cmd[0] <= 'h')
+	&&   (cmd[1] >= '1' && cmd[1] <= '8')
+	)) goto usage;
+
+	if ((checker = getcheckerbypos(checkers, cmd[0] - 'a' + 1, cmd[1] - '1' + 1)) == NULL) {
+		puts("specified field is blank");
+		return;
+	}
+
+	*checker = -1;
+}
+
+static void
+cmdsu(int16_t *checkers, char *cmd)
+{
+	int16_t *checker, *dest;
+
+	if (!strcmp(cmd, "help")) {
+		usage:
+		puts("usage: su <position>");
+		puts("\nexample: su a7");
+		return;
+	}
+
+	if (
+	!(   (cmd[0] >= 'a' && cmd[0] <= 'h')
+	&&   (cmd[1] >= '1' && cmd[1] <= '8')
+	)) goto usage;
+
+	if ((checker = getcheckerbypos(checkers, cmd[0] - 'a' + 1, cmd[1] - '1' + 1)) == NULL) {
+		puts("specified field is blank");
+		return;
+	}
+
+	if (COLOR(*checker) != color) {
+		puts("it's not your checker");
+		return;
+	}
+
+	*checker = makechecker(
+		!(SUPERPOWERED(*checker)),
+		COLOR(*checker),
+		cmd[1] - '1',
+		cmd[0] - 'a'
+	);
 }
 
 static void
@@ -382,9 +444,14 @@ main(int argc, char *argv[])
 				sendupdate(checkers, *chost);
 			} else if (COMMAND(line, "return"))
 				cmdreturn(*chost, move, color);
-			else if (COMMAND_ARG(line, "rm"))
-				printf("removed '%s'\n", line + 3);
-			else if (COMMAND(line, "quit") || COMMAND(line, "exit") || COMMAND(line, "bye"))
+			else if (COMMAND_ARG(line, "su")) {
+				cmdsu(checkers, line + 3);
+				sendupdate(checkers, *chost);
+			} else if (COMMAND_ARG(line, "rm")) {
+				cmdrm(checkers, line + 3);
+				sendupdate(checkers, *chost);
+			} else if (COMMAND(line, "quit") || COMMAND(line, "exit")
+					|| COMMAND(line, "bye"))
 				break;
 			else if (COMMAND(line, ""));
 			else
