@@ -1,4 +1,4 @@
-nchk - nanohard checkers
+nmak - nanohard checkers
 ========================
 
 Simple checkers game in C using TCP sockets.
