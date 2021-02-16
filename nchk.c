@@ -262,10 +262,10 @@ message(struct sockaddr_in addr, char *msg, size_t msgsiz, char **buf, size_t bu
 static void
 sendupdate(int16_t *checkers, struct sockaddr_in addr)
 {
-	char msg[39];
+	char msg[49];
 	msg[0] = 'U';
-	memcpy(msg + 1, checkers, 38);
-	if (message(addr, msg, 39, NULL, 0) < 0)
+	memcpy(msg + 1, checkers, 48);
+	if (message(addr, msg, 49, NULL, 0) < 0)
 		die("message:");
 }
 
