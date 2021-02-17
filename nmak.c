@@ -22,99 +22,60 @@
 #define GOUNDERT() GOTOXY(1, 10)
 #define RETONFAIL(statement) if ((statement) < -1) return -1
 
-#define SUPERPOWERED(checker) (((checker) >> 7) & 1)
-#define COLOR(checker) (((checker) >> 6) & 1)
-#define COL(checker) (((checker >> 3) & 7) + 1)
-#define ROW(checker) (((checker) & 7) + 1)
+#define FIGURE(card) (((card) >> 4) & 3)
+#define VALUE(card) (((card) & 15))
 
-static void cmdmv(int16_t *checkers, char *cmd);
+static int cardcount(int8_t *stack);
+static void cmddraw(int8_t *dest, int8_t *src, int count);
+static void cmdmv(int8_t *stack, int8_t index);
 static void cmdreturn(struct sockaddr_in addr, int *move, int color);
-static void cmdrm(int16_t *checkers, char *cmd);
-static void cmdsu(int16_t *checkers, char *cmd);
-static void drawchecker(int16_t checker);
-static void dumpcheckers(int16_t *checkers);
-static int16_t *getcheckerbypos(int16_t *checkers, int16_t row, int16_t col);
-static void go(int16_t col, int16_t row);
-static int16_t makechecker(int16_t superpowered, int16_t color, int16_t col, int16_t row);
-static void prepare(int16_t *checkers);
+static void drawcard(int8_t card);
+static void dumpcards(int8_t *stack);
+static int8_t *getcardbyindex(int8_t *stack, int8_t index);
+static int movecard(int8_t *deststack, int8_t *srcstack, int8_t index);
+static void prepare(int8_t *stack);
+static void shuffle(int8_t *array, size_t n);
+static void sort(int8_t *array, size_t n, char *cmd);
 static void usage(void);
 
 static size_t message(struct sockaddr_in addr, char *msg, size_t msgsiz, char **buf, size_t bufsiz);
-static void sendupdate(int16_t *checkers, struct sockaddr_in addr);
+static void sendupdate(int8_t *stack, struct sockaddr_in addr);
 static void requestjoin(struct sockaddr_in addr, struct sockaddr_in haddr);
-
-static const char t[] =
-"\033[1;97m   a  b  c  d  e  f  g  h\n"
-"\033[1;97m1 \033[0;37m[ ]\033[33m[ ]\033[37m[ ]\033[33m[ ]\033[37m[ ]\033[33m[ ]\033[37m[ ]\033[33m[ ]\n"
-"\033[1;97m2 \033[0;33m[ ]\033[37m[ ]\033[33m[ ]\033[37m[ ]\033[33m[ ]\033[37m[ ]\033[33m[ ]\033[37m[ ]\n"
-"\033[1;97m3 \033[0;37m[ ]\033[33m[ ]\033[37m[ ]\033[33m[ ]\033[37m[ ]\033[33m[ ]\033[37m[ ]\033[33m[ ]\n"
-"\033[1;97m4 \033[0;33m[ ]\033[37m[ ]\033[33m[ ]\033[37m[ ]\033[33m[ ]\033[37m[ ]\033[33m[ ]\033[37m[ ]\n"
-"\033[1;97m5 \033[0;37m[ ]\033[33m[ ]\033[37m[ ]\033[33m[ ]\033[37m[ ]\033[33m[ ]\033[37m[ ]\033[33m[ ]\n"
-"\033[1;97m6 \033[0;33m[ ]\033[37m[ ]\033[33m[ ]\033[37m[ ]\033[33m[ ]\033[37m[ ]\033[33m[ ]\033[37m[ ]\n"
-"\033[1;97m7 \033[0;37m[ ]\033[33m[ ]\033[37m[ ]\033[33m[ ]\033[37m[ ]\033[33m[ ]\033[37m[ ]\033[33m[ ]\n"
-"\033[1;97m8 \033[0;33m[ ]\033[37m[ ]\033[33m[ ]\033[37m[ ]\033[33m[ ]\033[37m[ ]\033[33m[ ]\033[37m[ ]\n";
 
 char *argv0;
 
+static const char *symbols[] = { "♠", "♥", "♣", "♦" };
+static const char values[] = "234567890JKQA?";
 static const char yxstr[] = "\033[%d;%dH";
-static int16_t color;
+static int8_t color;
+
+static int
+cardcount(int8_t *stack)
+{
+	int i, ret;
+	for (i = ret = 0; i < 52; ++i)
+		if (stack[i] >= 0) ++ret;
+	return ret;
+}
 
 static void
-cmdmv(int16_t *checkers, char *cmd)
+cmddraw(int8_t *dest, int8_t *src, int count)
 {
-	int16_t *checker, *dest;
-
-	if (!strcmp(cmd, "help")) {
-		usage:
-		puts("usage: mv <src position> <dest position>");
-		puts("   or: mv <src position> <movement>");
-		puts("\nexample: mv c3 d4");
-		puts(  "         mv c3 rd");
-		puts("\n<movement> is 2 letters: [l]eft/[r]ight and [u]p/[d]own");
-		return;
-	}
-
-	if (cmd[3] == 'l') cmd[3] = (cmd[0] - 1);
-	else if (cmd[3] == 'r') cmd[3] = (cmd[0] + 1);
-
-	if (cmd[4] == 'u' || cmd[4] == 't') cmd[4] = (cmd[1] - 1);
-	else if (cmd[4] == 'd' || cmd[4] == 'b') cmd[4] = (cmd[1] + 1);
-
-	if (
-	!(   (cmd[0] >= 'a' && cmd[0] <= 'h')
-	&&   (cmd[1] >= '1' && cmd[1] <= '8')
-	&&   (cmd[2] == ' ')
-	&&  ((cmd[3] >= 'a' && cmd[3] <= 'h') || (cmd[3] == 'l' || cmd[3] <= 'r'))
-	&&  ((cmd[4] >= '1' && cmd[4] <= '8')
-	||   (cmd[3] == 'u' || cmd[3] <= 'd' || cmd[3] == 't' || cmd[3] <= 'b'))
-	)) goto usage;
-
-	if ((checker = getcheckerbypos(checkers, cmd[0] - 'a' + 1, cmd[1] - '1' + 1)) == NULL) {
-		puts("specified field is blank");
-		return;
-	}
-
-	if (COLOR(*checker) != color) {
-		puts("it's not your checker");
-		return;
-	}
-
-	if ((dest = getcheckerbypos(checkers, cmd[3] - 'a' + 1, cmd[4] - '1' + 1)) != NULL) {
-		if (COLOR(*dest) == color) {
-			puts("you can't beat checker in your color");
-			return;
-		} else {
-			*dest = -1;
-			puts("*beating*");
+	int i;
+	for (i = 0; i < count; ++i)
+		switch (movecard(dest, src, 0)) {
+		case 1: puts("stack is empty");     return; break;
+		case 2: puts("no space available"); return; break;
 		}
-	}
+}
 
-	*checker = makechecker(
-		SUPERPOWERED(*checker),
-		COLOR(*checker),
-		cmd[4] - '1',
-		cmd[3] - 'a'
-	);
+static void
+cmdmv(int8_t *stack, int8_t index)
+{
+	switch (movecard(stack + 52, stack + (52 * (color + 2)), index)) {
+	case 1: puts("specified field is blank");   return; break;
+	case 2: puts("no space available");         return; break;
+	}
 }
 
 static void
@@ -127,113 +88,141 @@ cmdreturn(struct sockaddr_in addr, int *move, int color)
 }
 
 static void
-cmdrm(int16_t *checkers, char *cmd)
+cmdrestack(int8_t *stack)
 {
-	int16_t *checker, *dest;
-
-	if (!strcmp(cmd, "help")) {
-		usage:
-		puts("usage: rm <position>");
-		puts("\nexample: rm c4");
-		return;
-	}
-
-	if (
-	!(   (cmd[0] >= 'a' && cmd[0] <= 'h')
-	&&   (cmd[1] >= '1' && cmd[1] <= '8')
-	)) goto usage;
-
-	if ((checker = getcheckerbypos(checkers, cmd[0] - 'a' + 1, cmd[1] - '1' + 1)) == NULL) {
-		puts("specified field is blank");
-		return;
-	}
-
-	*checker = -1;
+	int i;
+	for (i = 0; i < cardcount(stack + 52); ++i)
+		switch (movecard(stack, stack + 52, 0)) {
+		case 1: puts("specified field is blank");   return; break;
+		case 2: puts("no space available");         return; break;
+		}
 }
 
 static void
-cmdsu(int16_t *checkers, char *cmd)
+drawcard(int8_t card)
 {
-	int16_t *checker, *dest;
-
-	if (!strcmp(cmd, "help")) {
-		usage:
-		puts("usage: su <position>");
-		puts("\nexample: su a7");
-		return;
-	}
-
-	if (
-	!(   (cmd[0] >= 'a' && cmd[0] <= 'h')
-	&&   (cmd[1] >= '1' && cmd[1] <= '8')
-	)) goto usage;
-
-	if ((checker = getcheckerbypos(checkers, cmd[0] - 'a' + 1, cmd[1] - '1' + 1)) == NULL) {
-		puts("specified field is blank");
-		return;
-	}
-
-	if (COLOR(*checker) != color) {
-		puts("it's not your checker");
-		return;
-	}
-
-	*checker = makechecker(
-		!(SUPERPOWERED(*checker)),
-		COLOR(*checker),
-		cmd[1] - '1',
-		cmd[0] - 'a'
-	);
+	if (card < 0) return;
+	printf("\033[1;37m[\033[1;%sm%s %c%c\033[1;37m]",
+			(FIGURE(card) % 2) ? "31" : "97", symbols[FIGURE(card)],
+			VALUE(card) == 8 /* 10 */ ? '1' : ' ',
+			values[VALUE(card)]);
 }
 
 static void
-drawchecker(int16_t checker)
+dumpcards(int8_t *stack)
 {
-	if (checker < 0) return;
-	go(COL(checker), ROW(checker));
-	printf("\033[1;3%cm%c", COLOR(checker) + '1', SUPERPOWERED(checker) ? '@' : 'O');
+	int i, j, c;
+	printf("\033[1;37m[\033[1;96m@ \033[1;97m%2d\033[1;37m]",
+			cardcount(stack));
+	for (i = j = 0; i < 52; ++i) {
+		if (stack[i + 52] >= 0)
+			if (!(++j % 12))
+				puts("");
+		drawcard(stack[i + 52]);
+	}
+	puts("\n————————————————————————————————————————————————————————————————");
+	for (i = 0, c = j = -1; i < 52; ++i) {
+		if (stack[i + 52 + (52 * (color + 1))] >= 0)
+			if (!(++j % 12)) {
+				int k, l;
+				if (!(c % 12)) puts("");
+				for (k = 0, l = 0; k < 52; ++k) {
+					++c;
+					if (stack[k + 52 + (52 * (color + 1))] >= 0)
+						printf("\033[1;33m│\033[1;37m#\033[1;97m%03d\033[1;33m│", c);
+					if (!(++l % 12)) break;
+				}
+				puts("");
+			}
+		drawcard(stack[i + 52 + (52 * (color + 1))]);
+	}
 }
 
-static void
-dumpcheckers(int16_t *checkers)
+static int8_t *
+getblankcard(int8_t *stack)
 {
-	int i, j;
-	for (i = 0; i < 2; ++i)
-		for (j = 0; j < 12; ++j)
-			drawchecker(checkers[j + (i * 12)]);
-}
-
-static int16_t *
-getcheckerbypos(int16_t *checkers, int16_t row, int16_t col)
-{
-	int i, j;
-	for (i = 0; i < 2; ++i)
-		for (j = 0; j < 12; ++j)
-			if (ROW(checkers[j + (i * 12)]) == row && COL(checkers[j + (i * 12)]) == col)
-				return &(checkers[j + (i * 12)]);
+	int i;
+	for (i = 0; i < 52; ++i)
+		if (stack[i] < 0)
+			return stack + i;
 	return NULL;
 }
 
-static void
-go(int16_t col, int16_t row)
-{
-	GOTOXY((3 * row) + 1, col + 1);
-}
-
-static int16_t
-makechecker(int16_t superpowered, int16_t color, int16_t col, int16_t row)
-{
-	return (row & 7) + ((col & 7) << 3) + ((color & 1) << 6) + ((superpowered & 1) << 7);
-}
-
-static void
-prepare(int16_t *checkers)
+static int8_t *
+getcardbyindex(int8_t *stack, int8_t index)
 {
 	int i, j;
-	for (i = 0; i < 2; ++i)
-		for (j = 0; j < 12; ++j)
-			checkers[j + (i * 12)] = 0 + (i << 6) + (((j / 4) + (i * 5)) << 3) +
-				(((j % 4) * 2) + (!(((j / 4) + i) % 2)));
+	for (i = 0, j = -1; i < 52; ++i)
+		if (stack[i] != -1 && ++j == index)
+			return stack + i;
+	return NULL;
+}
+
+static int
+movecard(int8_t *deststack, int8_t *srcstack, int8_t index)
+{
+	int8_t *src, *dest;
+
+	if ((src = getcardbyindex(srcstack, index)) == NULL);
+		/* return 1; */
+
+	if ((dest = getblankcard(deststack)) == NULL)
+		return 2;
+
+	*dest = *src;
+	*src = -1;
+
+	return 0;
+}
+
+static void
+prepare(int8_t *stack)
+{
+	int i, j;
+	for (i = 0; i < 52; ++i)
+		stack[i] = 0 + (i % 13) + ((i / 13) << 4);
+	shuffle(stack, 52);
+	for (j = 1; j < 4; ++j)
+		for (i = 0; i < 52; ++i)
+			stack[i + (52 * j)] = -1;
+}
+
+static void
+shuffle(int8_t *array, size_t n)
+{
+	size_t i, j;
+	int t;
+    if (n > 1) {
+        for (i = 0; i < n - 1; i++) {
+          j = i + rand() / (RAND_MAX / (n - i) + 1);
+          t = array[j];
+          array[j] = array[i];
+          array[i] = t;
+        }
+    }
+}
+
+static void
+sort(int8_t *array, size_t n, char *cmd)
+{
+	int i, j, k;
+	if (COMMAND(cmd, "f") || COMMAND(cmd, "fig") || COMMAND(cmd, "figure")) {
+		for (i = 0; i < n; ++i)
+			for (j = 0; j < n - i - 1; ++j)
+				if (array[j] > array[j + 1]) {
+					k = array[j];
+					array[j] = array[j + 1];
+					array[j + 1] = k;
+				}
+	} else {
+		for (i = 0; i < n; ++i)
+			for (j = 0; j < n - i - 1; ++j)
+				if (((array[j] & (1 << 8)) - 1) > ((array[j + 1] & (1 << 8)) - 1)) {
+					k = array[j];
+					array[j] = array[j + 1];
+					array[j + 1] = k;
+				}
+	}
 }
 
 static void
@@ -260,12 +249,12 @@ message(struct sockaddr_in addr, char *msg, size_t msgsiz, char **buf, size_t bu
 }
 
 static void
-sendupdate(int16_t *checkers, struct sockaddr_in addr)
+sendupdate(int8_t *stack, struct sockaddr_in addr)
 {
-	char msg[49];
+	char msg[1 + (52 * 4)];
 	msg[0] = 'U';
-	memcpy(msg + 1, checkers, 48);
-	if (message(addr, msg, 49, NULL, 0) < 0)
+	memcpy(msg + 1, stack, (52 * 4));
+	if (message(addr, msg, 1 + (52 * 4), NULL, 0) < 0)
 		die("message:");
 }
 
@@ -285,7 +274,8 @@ main(int argc, char *argv[])
 	pid_t forkpid, parentpid;
 	sigset_t sig; int signo;
 	socklen_t caddrsiz;
-	int *move; char *ad;
+	char *ad; int *move;
+	int8_t *stacks;
 
 	struct sockaddr_in haddr, caddr;
 	struct sockaddr_in *chost = mmap(NULL, sizeof(*chost), PROT_READ | PROT_WRITE,
@@ -297,14 +287,20 @@ main(int argc, char *argv[])
 	move = mmap(NULL, sizeof(*move), PROT_READ | PROT_WRITE,
 			MAP_ANONYMOUS | MAP_SHARED, 0, 0);
 
-	/* 2 arrays of 12 checkers
-	   in format:
-	   [1 bit: superpowered][1 bit: color][3 bits: column][3 bits: row] */
-	int16_t *checkers = mmap(NULL, sizeof(*checkers) * 24, PROT_READ | PROT_WRITE,
+	/* array divided to 4 parts (* 52):
+	   - drawing stack
+	   - putting stack
+	   - A player's stack
+	   - B player's stack
+	   format:
+	   [1 bit: sign, used to recognize blank field for a card]
+	   [1 bits: reserved for later usage][2 bits: figure]
+	   [4 bits: value (2-10, J/Q/K/A, Joker (?), 2*nothing)] */
+	stacks = mmap(NULL, sizeof(*stacks) * 52 * 4, PROT_READ | PROT_WRITE,
 			MAP_ANONYMOUS | MAP_SHARED, 0, 0);
 
 	haddr.sin_family = caddr.sin_family = chost->sin_family = AF_INET;
-	haddr.sin_port = caddr.sin_port = chost->sin_port = htons(2321);
+	haddr.sin_port = caddr.sin_port = chost->sin_port = htons(4361);
 	haddr.sin_addr.s_addr = caddr.sin_addr.s_addr =
 		chost->sin_addr.s_addr = inet_addr("127.0.0.1");
 
@@ -331,14 +327,11 @@ main(int argc, char *argv[])
 	if (argc > 1)
 		chost->sin_port = htons(strtol(argv[1], NULL, 10));
 
-	prepare(checkers);
+	prepare(stacks);
 	parentpid = getpid();
 
-	fork:
-	{
-		int sockfd, clientfd, opt;
-		size_t resplen;
-
+	/* fork */ {
+		int sockfd, clientfd, opt; size_t resplen;
 		char buffer[BUFSIZ];
 
 		if ((sockfd = socket(haddr.sin_family, SOCK_STREAM, IPPROTO_TCP)) < 0)
@@ -391,7 +384,7 @@ main(int argc, char *argv[])
 					kill(parentpid, SIGUSR1);
 					break;
 				case 'U': /* Update */
-					memcpy(checkers, buffer + 1, resplen - 1);
+					memcpy(stacks, buffer + 1, resplen - 1);
 					kill(parentpid, SIGUSR1);
 					break;
 				}
@@ -423,9 +416,8 @@ main(int argc, char *argv[])
 
 	while (1) {
 		GOTOXY(1, 1);
-		printf("%s", t);
-		dumpcheckers(checkers);
-		GOUNDERT();
+		dumpcards(stacks);
+		puts("");
 		printf("\033[0;97mstatus: \033[1;9%cm%s\033[0;97m\n", *move + '1', *move == color ? "your move" : "waiting");
 
 		if (*move != color)
@@ -436,20 +428,31 @@ main(int argc, char *argv[])
 			if (getline(&line, &lnsiz, stdin) < 0)
 				break;
 			line[strlen(line) - 1] = '\0';
-			printf("\033[2J\033[H");
-			GOTOXY(1, 12);
+			printf("\033[2J");
 
-			if (COMMAND_ARG(line, "mv")) {
-				cmdmv(checkers, line + 3);
-				sendupdate(checkers, *chost);
-			} else if (COMMAND(line, "return"))
+			if (COMMAND(line, "draw")) {
+				cmddraw(stacks + (52 * (color + 2)), stacks, 1);
+				sendupdate(stacks, *chost);
+			} else if (COMMAND_ARG(line, "draw")) {
+				cmddraw(stacks + (52 * (color + 2)), stacks, strtol(line + 5, NULL, 10));
+				sendupdate(stacks, *chost);
+			} else if (COMMAND_ARG(line, "mv")) {
+				cmdmv(stacks, strtol(line + 3, NULL, 10));
+				sendupdate(stacks, *chost);
+			} else if (COMMAND(line, "next")) {
+				cmddraw(stacks + 52, stacks, 1);
+				sendupdate(stacks, *chost);
+			} else if (COMMAND(line, "restack")) {
+				cmdrestack(stacks);
+				sendupdate(stacks, *chost);
+			} else if (COMMAND(line, "return") || COMMAND(line, "ret"))
 				cmdreturn(*chost, move, color);
-			else if (COMMAND_ARG(line, "su")) {
-				cmdsu(checkers, line + 3);
-				sendupdate(checkers, *chost);
-			} else if (COMMAND_ARG(line, "rm")) {
-				cmdrm(checkers, line + 3);
-				sendupdate(checkers, *chost);
+			else if (COMMAND(line, "shuffle")) {
+				shuffle(stacks, 52);
+				sendupdate(stacks, *chost);
+			} else if (COMMAND(line, "sort")) {
+				sort(stacks, 52, line);
+				sendupdate(stacks, *chost);
 			} else if (COMMAND(line, "quit") || COMMAND(line, "exit")
 					|| COMMAND(line, "bye"))
 				break;
@@ -460,7 +463,7 @@ main(int argc, char *argv[])
 	}
 
 	kill(forkpid, SIGTERM);
-	munmap(checkers, sizeof(*checkers) * 24);
+	munmap(stacks, sizeof(*stacks) * 52 * 4);
 	munmap(chost, sizeof(*chost));
 	munmap(move, sizeof(*move));
 	munmap(ad, sizeof(*ad));
