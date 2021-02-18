@@ -45,6 +45,7 @@ static void requestjoin(struct sockaddr_in addr, struct sockaddr_in haddr);
 char *argv0;
 
 static const char *symbols[] = { "♠", "♥", "♣", "♦" };
+static const char separator[] = "\n\033[0;37m————————————————————————————————————————————————————————————————————————";
 static const char values[] = "234567890JKQA?";
 static const char yxstr[] = "\033[%d;%dH";
 static int8_t color;
@@ -91,7 +92,7 @@ static void
 cmdrestack(int8_t *stack)
 {
 	int i;
-	for (i = 0; i < cardcount(stack + 52); ++i)
+	for (i = 0; i < cardcount(stack + 52) - 1; ++i)
 		switch (movecard(stack, stack + 52, 0)) {
 		case 1: puts("specified field is blank");   return; break;
 		case 2: puts("no space available");         return; break;
@@ -120,21 +121,17 @@ dumpcards(int8_t *stack)
 				puts("");
 		drawcard(stack[i + 52]);
 	}
-	puts("\n————————————————————————————————————————————————————————————————");
+	puts(separator);
 	for (i = 0, c = j = -1; i < 52; ++i) {
 		if (stack[i + 52 + (52 * (color + 1))] >= 0)
-			if (!(++j % 12)) {
-				int k, l;
-				if (!(c % 12)) puts("");
-				for (k = 0, l = 0; k < 52; ++k) {
-					if (stack[k + 52 + (52 * (color + 1))] >= 0)
-						printf("\033[1;33m│\033[1;37m#\033[1;97m%03d\033[1;33m│", ++c);
-					if (!(++l % 12)) break;
-				}
+			if (!(++j % 12))
 				puts("");
-			}
 		drawcard(stack[i + 52 + (52 * (color + 1))]);
 	}
+	puts("");
+	for (i = 0; i < 12; ++i)
+		printf(" \033[1;37m+\033[1;97m%03d ", i);
+	puts(separator);
 }
 
 static int8_t *
@@ -457,7 +454,7 @@ main(int argc, char *argv[])
 				shuffle(stacks, 52);
 				sendupdate(stacks, *chost);
 			} else if (COMMAND(line, "sort")) {
-				sort(stacks, 52, line);
+				sort(stacks + 52 * (color + 2), 52, line);
 				sendupdate(stacks, *chost);
 			} else if (COMMAND(line, "take")) {
 				movecard(stacks + (52 * (color + 2)), stacks + 52, -1);
