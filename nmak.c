@@ -152,9 +152,15 @@ static int8_t *
 getcardbyindex(int8_t *stack, int8_t index)
 {
 	int i, j;
-	for (i = 0, j = -1; i < 52; ++i)
-		if (stack[i] != -1 && ++j == index)
-			return stack + i;
+	if (index >= 0) {
+		for (i = 0, j = -1; i < 52; ++i)
+			if (stack[i] != -1 && ++j == index)
+				return stack + i;
+	} else {
+		for (i = 51; i > -1; --i)
+			if (stack[i] != -1)
+				return stack + i;
+	}
 	return NULL;
 }
 
@@ -453,6 +459,9 @@ main(int argc, char *argv[])
 				sendupdate(stacks, *chost);
 			} else if (COMMAND(line, "sort")) {
 				sort(stacks, 52, line);
+				sendupdate(stacks, *chost);
+			} else if (COMMAND(line, "take")) {
+				movecard(stacks + (52 * (color + 2)), stacks + 52, -1);
 				sendupdate(stacks, *chost);
 			} else if (COMMAND(line, "quit") || COMMAND(line, "exit")
 					|| COMMAND(line, "bye"))
