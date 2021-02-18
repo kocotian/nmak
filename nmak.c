@@ -419,6 +419,7 @@ main(int argc, char *argv[])
 		dumpcards(stacks);
 		puts("");
 		printf("\033[0;97mstatus: \033[1;9%cm%s\033[0;97m\n", *move + '1', *move == color ? "your move" : "waiting");
+		printf("\033[0;97mcard count: \033[1;91m%d:\033[1;92m%d\033[0;97m\n", cardcount(stacks + 52 * 2), cardcount(stacks + 52 * 3));
 
 		if (*move != color)
 			sigwait(&sig, &signo);
