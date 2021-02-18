@@ -127,9 +127,8 @@ dumpcards(int8_t *stack)
 				int k, l;
 				if (!(c % 12)) puts("");
 				for (k = 0, l = 0; k < 52; ++k) {
-					++c;
 					if (stack[k + 52 + (52 * (color + 1))] >= 0)
-						printf("\033[1;33m│\033[1;37m#\033[1;97m%03d\033[1;33m│", c);
+						printf("\033[1;33m│\033[1;37m#\033[1;97m%03d\033[1;33m│", ++c);
 					if (!(++l % 12)) break;
 				}
 				puts("");
@@ -334,7 +333,7 @@ main(int argc, char *argv[])
 		chost->sin_port = htons(strtol(argv[1], NULL, 10));
 
 	prepare(stacks);
-	parentpid = getpid();
+	srand(parentpid = getpid());
 
 	/* fork */ {
 		int sockfd, clientfd, opt; size_t resplen;
